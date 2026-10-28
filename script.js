@@ -1,456 +1,240 @@
-"use strict";
-
-
-
+//
+// FASE 1: Modelagem dos dados (Classe Base)
+//
 class Produto {
-    #preco;
-    #quantidade;
-
     constructor(nome, preco, quantidade) {
-        const nomeValidado = typeof nome === "string" ? nome.trim() : "";
-        const precoNum = Number(preco);
-        const quantidadeNum = Number(quantidade);
-
-        if (!nomeValidado) {
-            throw new Error("Informe um nome válido para o produto.");
-        }
-
-        if (nomeValidado.length > 100) {
-            throw new Error("O nome deve ter no máximo 100 caracteres.");
-        }
-
-        if (!Number.isFinite(precoNum) || precoNum <= 0) {
-            throw new Error("O preço deve ser um número maior que zero.");
-        }
-
-        if (!Number.isSafeInteger(quantidadeNum) || quantidadeNum <= 0) {
-            throw new Error("A quantidade deve ser um número inteiro maior que zero.");
-        }
-
-        this.nome = nomeValidado;
-        this.#preco = Math.round((precoNum + Number.EPSILON) * 100) / 100;
-        this.#quantidade = quantidadeNum;
+        this.nome = nome;
+        this.preco = parseFloat(preco);
+        this.quantidade = parseInt(quantidade);
     }
 
-    get preco() {
-        return this.#preco;
-    }
-
-    get quantidade() {
-        return this.#quantidade;
-    }
-
+    // Método que calcula o subtotal do produto
     calcularSubtotal() {
-        return Math.round(
-            (this.#preco * this.#quantidade + Number.EPSILON) * 100
-        ) / 100;
+        return this.preco * this.quantidade;
     }
 }
 
-
-const CHAVE_STORAGE = "produtos_estoque";
-
+//
+// FASE 2: Gerenciamento de Estado (Memória e Edição)
+//
 const listaDeProdutos = [];
 
+// Estado auxiliar: null indica "Modo Inclusão", número indica "Modo Edição"
 let indiceEdicao = null;
 
-const formProduto = document.getElementById("produto-form");
-const campoNome = document.getElementById("nome");
-const campoPreco = document.getElementById("preco");
-const campoQuantidade = document.getElementById("quantidade");
+// Chave para persistência no navegador
+const CHAVE_STORAGE = "sistema_estoque_produtos";
 
-const botaoSalvar = document.getElementById("botao-salvar");
-const botaoCancelar = document.getElementById("botao-cancelar");
-const botaoLimpar = document.getElementById("limpar-tabela");
-
-const tabelaBody = document.getElementById("lista-produtos");
-const elementoTotal = document.getElementById("total-estoque");
-const elementoQuantidade = document.getElementById("quantidade-produtos");
-const mensagem = document.getElementById("mensagem");
-const mensagemVazia = document.getElementById("mensagem-vazia");
-const campoPesquisa = document.getElementById("pesquisa");
-const tituloFormulario = document.getElementById("titulo-formulario");
-
-const formatoMoeda = new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL"
-});
-
-
-
-function formatarMoeda(valor) {
-    return formatoMoeda.format(valor);
-}
-
-function mostrarMensagem(texto, tipo = "sucesso") {
-    mensagem.textContent = texto;
-    mensagem.className = `mensagem ${tipo}`;
-}
-
-function limparMensagem() {
-    mensagem.textContent = "";
-    mensagem.className = "mensagem";
-}
-
+//
+// FASE 2.1: Persistência com localStorage
+//
 function salvarNoLocalStorage() {
-    try {
-        const dados = listaDeProdutos.map(produto => ({
-            nome: produto.nome,
-            preco: produto.preco,
-            quantidade: produto.quantidade
-        }));
-
-        localStorage.setItem(CHAVE_STORAGE, JSON.stringify(dados));
-        return true;
-    } catch (erro) {
-        console.error("Erro ao salvar produtos:", erro);
-        mostrarMensagem(
-            "Não foi possível salvar os dados. Verifique o armazenamento do navegador.",
-            "erro"
-        );
-        return false;
-    }
+    const listaEmTexto = JSON.stringify(listaDeProdutos);
+    localStorage.setItem(CHAVE_STORAGE, listaEmTexto);
 }
-
-
 
 function carregarDoLocalStorage() {
-    try {
-        const dadosSalvos = localStorage.getItem(CHAVE_STORAGE);
+    const dadosSalvos = localStorage.getItem(CHAVE_STORAGE);
 
-        if (dadosSalvos === null) {
-            return;
-        }
+    if (dadosSalvos) {
+        const produtosObjetos = JSON.parse(dadosSalvos);
 
-        const dados = JSON.parse(dadosSalvos);
-
-        if (!Array.isArray(dados)) {
-            throw new Error("O formato dos dados salvos é inválido.");
-        }
-
-        const produtosCarregados = dados.map(dado => {
-            return new Produto(
-                dado.nome,
-                dado.preco,
-                dado.quantidade
-            );
+        produtosObjetos.forEach((prod) => {
+            const produtoInstanciado = new Produto(prod.nome, prod.preco, prod.quantidade);
+            listaDeProdutos.push(produtoInstanciado);
         });
-
-        listaDeProdutos.push(...produtosCarregados);
-    } catch (erro) {
-        console.error("Erro ao carregar produtos:", erro);
-        mostrarMensagem(
-            "Não foi possível carregar os produtos salvos. Os dados inválidos não foram carregados.",
-            "erro"
-        );
     }
 }
 
+//
+// FASE 3: Captura de Elementos do DOM
+//
+const formProduto = document.getElementById("produto-form");
+const btnSubmit = formProduto.querySelector("button[type='submit']");
+const btnLimparTudo = document.getElementById("limpar-tabela");
+const totalEstoqueEl = document.getElementById("total-estoque");
 
+// NOVIDADE V4: Captura do novo elemento input de busa //
 
-formProduto.addEventListener("submit", function (event) {
-    event.preventDefault();
-    limparMensagem();
+const campoBusca = document.getElementById("campo-busca");
 
-    const nome = campoNome.value.trim();
-    const preco = campoPreco.value;
-    const quantidade = campoQuantidade.value;
-
-  
-    if (!nome) {
-        mostrarMensagem("Por favor, informe um nome válido.", "erro");
-        campoNome.focus();
-        return;
-    }
-
-    if (nome.length > 100) {
-        mostrarMensagem("O nome deve ter no máximo 100 caracteres.", "erro");
-        campoNome.focus();
-        return;
-    }
-
-    if (preco.trim() === "" || !Number.isFinite(Number(preco)) || Number(preco) <= 0) {
-        mostrarMensagem("O preço deve ser maior que zero.", "erro");
-        campoPreco.focus();
-        return;
-    }
-
-    if (
-        quantidade.trim() === "" ||
-        !Number.isSafeInteger(Number(quantidade)) ||
-        Number(quantidade) <= 0
-    ) {
-        mostrarMensagem(
-            "A quantidade deve ser um número inteiro maior que zero.",
-            "erro"
-        );
-        campoQuantidade.focus();
-        return;
-    }
-
-    let produto;
-
-    try {
-        produto = new Produto(nome, preco, quantidade);
-    } catch (erro) {
-        mostrarMensagem(erro.message, "erro");
-        return;
-    }
-
-   
-    if (indiceEdicao === null) {
-        listaDeProdutos.push(produto);
-
-        if (!salvarNoLocalStorage()) {
-            listaDeProdutos.pop();
-            return;
-        }
-
-        mostrarMensagem("Produto cadastrado com sucesso.");
-    } else {
-        
-        const indice = indiceEdicao;
-        const produtoAnterior = listaDeProdutos[indice];
-
-        if (!produtoAnterior) {
-            cancelarEdicao();
-            mostrarMensagem("O produto selecionado não foi encontrado.", "erro");
-            return;
-        }
-
-        listaDeProdutos[indice] = produto;
-
-        if (!salvarNoLocalStorage()) {
-            listaDeProdutos[indice] = produtoAnterior;
-            return;
-        }
-
-        mostrarMensagem("Produto atualizado com sucesso.");
-    }
-
-    cancelarEdicao(false);
-    formProduto.reset();
-    renderizarTabela();
-    atualizarTotalEstoque();
-});
-
-
+//
+// FASE 4: Função para Transferir Estado para Modo Edição
+//
 function prepararEdicao(index) {
     const produto = listaDeProdutos[index];
 
-    if (!produto) {
-        mostrarMensagem("Produto não encontrado.", "erro");
+    // 1. Preenche os campos do formulário com os dados do registro selecionado
+    document.getElementById("nome").value = produto.nome;
+    document.getElementById("preco").value = produto.preco;
+    document.getElementById("quantidade").value = produto.quantidade;
+
+    // 2. Atualiza a variável global de controle e altera o texto do botão
+    indiceEdicao = index;
+    btnSubmit.textContent = "Salvar Alterações";
+    btnSubmit.classList.add("btn-warning");
+}
+
+// NOVIDADE V4: função inteligente de filtragem utilizando (.filter())//
+// a analise que foi digitada e retorna
+// apenas os prpdutos filtrados
+
+function obterProdutosFiltrados(){
+    //sanitizar o termo de busca e converter para minusculo
+        const termo = campoBusca.value.trim().toLowerCase();
+}
+ // Se a busca estiver vazia, retorna lista completa
+if(termo){
+    return listaDeProdutos
+}
+
+function obterProdutosFiltrados() {
+    // Sanitizar o termo de busca e converter para minúsculo
+    const termo = campoBusca.value.trim().toLowerCase();
+
+    // Se a busca estiver vazia, retorna a lista completa
+    if (!termo) {
+        return listaDeProdutos;
+    }
+
+    // Usa o método de alta performance .filter() para buscar no array
+    return listaDeProdutos.filter(produto => 
+        produto.nome.toLowerCase().includes(termo)
+    );
+}
+
+
+//
+// [FASE 5: Escuta de Eventos
+//
+
+// 1. Evento Submit do Formulário com Validações (Guard Clauses) e Fluxo Update
+formProduto.addEventListener("submit", function (event) {
+    event.preventDefault();
+
+    // Sanitização e Captura dos Valores
+    const nome = document.getElementById("nome").value.trim();
+    const preco = parseFloat(document.getElementById("preco").value);
+    const quantidade = parseInt(document.getElementById("quantidade").value);
+
+    // Guard Clause 1: Validação do nome
+    if (!nome) {
+        alert("Por favor, informe um nome válido para o produto.");
         return;
     }
 
-    indiceEdicao = index;
-
-    campoNome.value = produto.nome;
-    campoPreco.value = produto.preco;
-    campoQuantidade.value = produto.quantidade;
-
-    botaoSalvar.textContent = "Salvar Alterações";
-    botaoCancelar.hidden = false;
-    tituloFormulario.textContent = "Editar Produto";
-
-    limparMensagem();
-
-    campoNome.focus();
-
-    document.querySelector(".card").scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-    });
-}
-
-function cancelarEdicao(limparCampos = true) {
-    indiceEdicao = null;
-
-    botaoSalvar.textContent = "Adicionar Produto";
-    botaoCancelar.hidden = true;
-    tituloFormulario.textContent = "Cadastrar Produto";
-
-    if (limparCampos) {
-        formProduto.reset();
+    // Guard Clause 2: Checagem de Limites Numéricos
+    if (isNaN(preco) || preco <= 0 || isNaN(quantidade) || quantidade <= 0) {
+        alert("O preço e a quantidade devem ser valores numéricos maiores que zero.");
+        return;
     }
-}
 
-botaoCancelar.addEventListener("click", function () {
-    cancelarEdicao();
-    limparMensagem();
+    // Instancia o novo produto com dados validados
+    const produtoValido = new Produto(nome, preco, quantidade);
+
+    // Lógica de Persistência em Memória: Inclusão vs. Alteração (Update)
+    if (indiceEdicao === null) {
+        // Modo Inclusão
+        listaDeProdutos.push(produtoValido);
+    } else {
+        // Modo Edição (Update)
+        listaDeProdutos[indiceEdicao] = produtoValido;
+        
+        // Restaura o estado original de cadastro
+        indiceEdicao = null;
+        btnSubmit.textContent = "Adicionar Produto";
+        btnSubmit.classList.remove("btn-warning");
+    }
+
+    // Sincroniza com localStorage, limpa o formulário e atualiza a interface
+    salvarNoLocalStorage();
+    formProduto.reset();
+    atualizarInterface();
 });
 
+// 2. Limpar Toda a Tabela
+btnLimparTudo.addEventListener("click", function () {
+    if (listaDeProdutos.length === 0) {
+        alert("A tabela já está vazia!");
+        return;
+    }
 
+    if (confirm("Tem certeza que deseja remover todos os produtos?")) {
+        listaDeProdutos.length = 0;
+        localStorage.removeItem(CHAVE_STORAGE);
+        
+        // Restaura estado se estivesse editando
+        indiceEdicao = null;
+        btnSubmit.textContent = "Adicionar Produto";
+        btnSubmit.classList.remove("btn-warning");
+
+        formProduto.reset();
+        atualizarInterface();
+    }
+});
+
+//
+// FASE 6: Funções de Atualização e Renderização da Interface
+//
+function removerProduto(index) {
+    listaDeProdutos.splice(index, 1);
+
+    // Caso o item excluído seja o que estava em edição, reseta o estado
+    if (indiceEdicao === index) {
+        indiceEdicao = null;
+        btnSubmit.textContent = "Adicionar Produto";
+        btnSubmit.classList.remove("btn-warning");
+        formProduto.reset();
+    }
+
+    salvarNoLocalStorage();
+    atualizarInterface();
+}
+
+function atualizarTotalEstoque() {
+    const total = listaDeProdutos.reduce((acc, produto) => {
+        return acc + produto.calcularSubtotal();
+    }, 0);
+
+    totalEstoqueEl.textContent = `Total em Estoque: R$ ${total.toFixed(2)}`;
+}
 
 function renderizarTabela() {
-    tabelaBody.replaceChildren();
+    const tabelaBody = document.querySelector("#tabela-produtos tbody");
+    tabelaBody.innerHTML = "";
 
-    const termo = campoPesquisa.value.trim().toLocaleLowerCase("pt-BR");
-
-    const produtosVisiveis = listaDeProdutos
-        .map((produto, index) => ({ produto, index }))
-        .filter(({ produto }) => {
-            return produto.nome.toLocaleLowerCase("pt-BR").includes(termo);
-        });
-
-    produtosVisiveis.forEach(({ produto, index }) => {
+    listaDeProdutos.forEach((produto, index) => {
         const linha = document.createElement("tr");
 
-        const celulaNome = document.createElement("td");
-        celulaNome.textContent = produto.nome;
+        linha.innerHTML = `
+            <td>${produto.nome}</td>
+            <td>R$ ${produto.preco.toFixed(2)}</td>
+            <td>${produto.quantidade}</td>
+            <td>R$ ${produto.calcularSubtotal().toFixed(2)}</td>
+            <td>
+                <button class="btn-editar">Editar</button>
+                <button class="btn-remover">Remover</button>
+            </td>
+        `;
 
-        const celulaPreco = document.createElement("td");
-        celulaPreco.textContent = formatarMoeda(produto.preco);
+        // Eventos dos botões da coluna de ações
+        const btnEditar = linha.querySelector(".btn-editar");
+        btnEditar.addEventListener("click", () => prepararEdicao(index));
 
-        const celulaQuantidade = document.createElement("td");
-        celulaQuantidade.textContent = produto.quantidade;
-
-        const celulaSubtotal = document.createElement("td");
-        celulaSubtotal.textContent = formatarMoeda(produto.calcularSubtotal());
-
-        const celulaAcoes = document.createElement("td");
-
-        const botaoEditar = document.createElement("button");
-        botaoEditar.type = "button";
-        botaoEditar.className = "btn-editar";
-        botaoEditar.textContent = "Editar";
-        botaoEditar.setAttribute("aria-label", `Editar ${produto.nome}`);
-
-        botaoEditar.addEventListener("click", function () {
-            prepararEdicao(index);
-        });
-
-        const botaoRemover = document.createElement("button");
-        botaoRemover.type = "button";
-        botaoRemover.className = "btn-remover";
-        botaoRemover.textContent = "Remover";
-        botaoRemover.setAttribute("aria-label", `Remover ${produto.nome}`);
-
-        botaoRemover.addEventListener("click", function () {
-            removerProduto(index);
-        });
-
-        celulaAcoes.append(botaoEditar, botaoRemover);
-
-        linha.append(
-            celulaNome,
-            celulaPreco,
-            celulaQuantidade,
-            celulaSubtotal,
-            celulaAcoes
-        );
+        const btnRemover = linha.querySelector(".btn-remover");
+        btnRemover.addEventListener("click", () => removerProduto(index));
 
         tabelaBody.appendChild(linha);
     });
-
-    mensagemVazia.classList.toggle(
-        "oculta",
-        produtosVisiveis.length > 0
-    );
-
-    if (produtosVisiveis.length === 0) {
-        mensagemVazia.textContent = termo
-            ? "Nenhum produto corresponde à pesquisa."
-            : "Nenhum produto cadastrado.";
-    }
 }
 
-
-
-function atualizarTotalEstoque() {
-    const valorTotal = listaDeProdutos.reduce(
-        (total, produto) => total + produto.calcularSubtotal(),
-        0
-    );
-
-    elementoTotal.textContent = formatarMoeda(valorTotal);
-    elementoQuantidade.textContent = listaDeProdutos.length;
-}
-
-
-
-function removerProduto(index) {
-    const produto = listaDeProdutos[index];
-
-    if (!produto) {
-        mostrarMensagem("Produto não encontrado.", "erro");
-        return;
-    }
-
-    const confirmar = window.confirm(
-        `Deseja realmente remover o produto "${produto.nome}"?`
-    );
-
-    if (!confirmar) {
-        return;
-    }
-
-    const removido = listaDeProdutos.splice(index, 1)[0];
-
-    // Se o produto removido estava em edição, cancela a edição.
-    if (indiceEdicao === index) {
-        cancelarEdicao();
-    } else if (indiceEdicao !== null && indiceEdicao > index) {
-        indiceEdicao--;
-    }
-
-    if (!salvarNoLocalStorage()) {
-        listaDeProdutos.splice(index, 0, removido);
-
-        if (indiceEdicao !== null && indiceEdicao >= index) {
-            indiceEdicao++;
-        }
-
-        renderizarTabela();
-        atualizarTotalEstoque();
-        return;
-    }
-
+function atualizarInterface() {
     renderizarTabela();
     atualizarTotalEstoque();
-    mostrarMensagem("Produto removido com sucesso.");
 }
 
-// ========================================
-// DELETE - LIMPAR TODOS OS PRODUTOS
-// ========================================
-
-botaoLimpar.addEventListener("click", function () {
-    if (listaDeProdutos.length === 0) {
-        mostrarMensagem("Não existem produtos para remover.", "erro");
-        return;
-    }
-
-    const confirmar = window.confirm(
-        "Deseja realmente excluir todos os produtos do estoque?"
-    );
-
-    if (!confirmar) {
-        return;
-    }
-
-    const anteriores = listaDeProdutos.slice();
-
-    listaDeProdutos.length = 0;
-    cancelarEdicao();
-
-    if (!salvarNoLocalStorage()) {
-        listaDeProdutos.push(...anteriores);
-        renderizarTabela();
-        atualizarTotalEstoque();
-        return;
-    }
-
-    renderizarTabela();
-    atualizarTotalEstoque();
-    mostrarMensagem("Todos os produtos foram removidos.");
-});
-
-
-
-campoPesquisa.addEventListener("input", renderizarTabela);
-
-
+//
+// FASE 7: Inicialização da Aplicação
+//
 carregarDoLocalStorage();
-renderizarTabela();
-atualizarTotalEstoque();
+atualizarInterface();
